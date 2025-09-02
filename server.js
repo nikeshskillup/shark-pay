@@ -1,61 +1,73 @@
 import express from "express";
-import cors from "cors";
 import axios from "axios";
+import crypto from "crypto";
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
-// Replace with your PhonePe credentials
-const MERCHANT_ID = process.env.PHONEPE_MERCHANT_ID;
-const SALT_KEY = process.env.PHONEPE_SALT_KEY;
-const BASE_URL = "https://api.phonepe.com/apis/hermes"; // UAT: https://api-preprod.phonepe.com/apis/hermes
+// ------------------ CONFIG ------------------
+const MERCHANT_ID = "YOUR_MERCHANT_ID";  // from PhonePe dashboard
+const SALT_KEY = "YOUR_SALT_KEY";        // from PhonePe dashboard
+const SALT_INDEX = "YOUR_SALT_INDEX";    // from PhonePe dashboard
+const BASE_URL = "https://api-preprod.phonepe.com/apis/pg-sandbox"; // use sandbox first
 
-// Create Payment Order
+// ------------------ CHECKSUM FUNCTION ------------------
+function generateChecksum(payload, apiEndpoint) {
+  const base64Payload = Buffer.from(JSON.stringify(payload)).toString("base64");
+  const stringToSign = base64Payload + apiEndpoint + SALT_KEY;
+  const sha256 = crypto.createHash("sha256").update(stringToSign).digest("hex");
+  return { base64Payload, checksum: sha256 + "###" + SALT_INDEX };
+}
+
+// ------------------ PAYMENT INITIATION ------------------
 app.post("/api/pay", async (req, res) => {
   try {
-    const { amount, mobile, transactionId } = req.body;
+    const { amount, userId } = req.body;
 
     const payload = {
       merchantId: MERCHANT_ID,
-      transactionId: transactionId,
-      amount: amount * 100, // in paise
-      merchantUserId: "USER123",
-      redirectUrl: "http://localhost:3000/success", // Change to your frontend URL
+      merchantTransactionId: "txn_" + Date.now(),
+      merchantUserId: userId || "guest_user",
+      amount: amount * 100, // paise
+      redirectUrl: "http://localhost:5000/api/callback", // after payment, PhonePe redirects here
       redirectMode: "POST",
-      callbackUrl: "https://your-vercel-server.vercel.app/api/callback",
-      mobileNumber: mobile,
-      paymentInstrument: {
-        type: "PAY_PAGE",
-      },
+      callbackUrl: "http://localhost:5000/api/callback",
+      mobileNumber: "9999999999", // optional
+      paymentInstrument: { type: "PAY_PAGE" },
     };
 
-    // Send to PhonePe API
-    const response = await axios.post(`${BASE_URL}/pg/v1/pay`, payload, {
-      headers: {
-        "Content-Type": "application/json",
-        "X-VERIFY": SALT_KEY,
-      },
-    });
+    const endpoint = "/pg/v1/pay";
+    const { base64Payload, checksum } = generateChecksum(payload, endpoint);
+
+    const response = await axios.post(
+      `${BASE_URL}${endpoint}`,
+      { request: base64Payload },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "X-VERIFY": checksum,
+          "X-MERCHANT-ID": MERCHANT_ID,
+        },
+      }
+    );
 
     res.json(response.data);
-  } catch (error) {
-    console.error(error.response?.data || error.message);
+  } catch (err) {
+    console.error(err.response?.data || err.message);
     res.status(500).json({ error: "Payment initiation failed" });
   }
 });
 
-// Payment Callback (PhonePe → Your backend)
+// ------------------ PAYMENT CALLBACK ------------------
 app.post("/api/callback", (req, res) => {
-  console.log("Callback from PhonePe:", req.body);
-  // Update DB / send status to frontend
-  res.sendStatus(200);
+  console.log("Callback received:", req.body);
+
+  // PhonePe sends payment status in req.body
+  // You should verify checksum again (for security) and then update order status in DB
+
+  // Example response to PhonePe (must return 200 OK quickly)
+  res.json({ success: true });
 });
 
-// Health check
-app.get("/", (req, res) => {
-  res.send("PhonePe backend is running 🚀");
-});
-
-const PORT = process.env.PORT || 9000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// ------------------ START SERVER ------------------
+app.listen(5000, () => console.log("Server running on http://localhost:5000"));
