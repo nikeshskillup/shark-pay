@@ -6,10 +6,11 @@ const app = express();
 app.use(express.json());
 
 // ------------------ CONFIG ------------------
-const MERCHANT_ID = "YOUR_MERCHANT_ID";  // from PhonePe dashboard
-const SALT_KEY = "YOUR_SALT_KEY";        // from PhonePe dashboard
-const SALT_INDEX = "YOUR_SALT_INDEX";    // from PhonePe dashboard
+const MERCHANT_ID = process.env.PHONEPE_MERCHANT_ID;
+const SALT_KEY = process.env.PHONEPE_SALT_KEY;
+const SALT_INDEX = process.env.PHONEPE_SALT_INDEX;
 const BASE_URL = "https://api-preprod.phonepe.com/apis/pg-sandbox"; // use sandbox first
+
 
 // ------------------ CHECKSUM FUNCTION ------------------
 function generateChecksum(payload, apiEndpoint) {
@@ -29,9 +30,10 @@ app.post("/api/pay", async (req, res) => {
       merchantTransactionId: "txn_" + Date.now(),
       merchantUserId: userId || "guest_user",
       amount: amount * 100, // paise
-      redirectUrl: "http://localhost:5000/api/callback", // after payment, PhonePe redirects here
+      redirectUrl: "https://shark-pay-eight.vercel.app/api/callback", // after payment, PhonePe redirects here
       redirectMode: "POST",
-      callbackUrl: "http://localhost:5000/api/callback",
+      // callbackUrl: "http://localhost:5000/api/callback",
+      callbackUrl: "https://shark-pay-eight.vercel.app/api/callback",
       mobileNumber: "9999999999", // optional
       paymentInstrument: { type: "PAY_PAGE" },
     };
