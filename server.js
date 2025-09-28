@@ -4,17 +4,15 @@ import crypto from "crypto";
 
 const app = express();
 
-// --- CORS Configuration (Good practice for Express) ---
-app.use((req, res, next) => {
-    // Note: The vercel.json file also sets this, but it's good practice
-    // to include it here for robustness.
+// --- Explicit CORS Handling for Preflight (OPTIONS) Request ---
+// CRITICAL FIX: This handler explicitly catches the browser's OPTIONS request 
+// to the /api/pay endpoint and immediately responds with 200 OK and the necessary headers.
+// This resolves the "does not have HTTP ok status" error.
+app.options("/api/pay", (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*'); 
-    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
+    res.sendStatus(200);
 });
 
 app.use(express.json());
@@ -126,5 +124,3 @@ app.post("/api/callback", (req, res) => {
 // ------------------ VERCEL SERVERLESS EXPORT ------------------
 // Export the Express app for Vercel to use.
 module.exports = app;
-
-// The previous app.listen(5000, ...) is removed as it is incompatible with Vercel.
