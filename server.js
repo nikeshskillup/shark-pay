@@ -1,80 +1,95 @@
 import express from "express";
-import axios from "axios";
+import Razorpay from "razorpay";
 import crypto from "crypto";
+import cors from "cors";
+import dotenv from "dotenv";
 
+dotenv.config();
 const app = express();
 
-// We keep the application clean. CORS headers will be applied by vercel.json.
+// ✅ Allow frontend origin
+app.use(cors({ origin: "http://localhost:8080", methods: ["GET", "POST"], allowedHeaders: ["Content-Type"] }));
 app.use(express.json());
 
-// ------------------ CONFIG ------------------
-const MERCHANT_ID = process.env.PHONEPE_MERCHANT_ID;
-const SALT_KEY = process.env.PHONEPE_SALT_KEY;
-const SALT_INDEX = process.env.PHONEPE_SALT_INDEX;
-const BASE_URL = "https://api-preprod.phonepe.com/apis/pg-sandbox"; 
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
 
-// ------------------ CHECKSUM FUNCTION ------------------
-function generateChecksum(payload, apiEndpoint) {
-  const base64Payload = Buffer.from(JSON.stringify(payload)).toString("base64");
-  const stringToSign = base64Payload + apiEndpoint + SALT_KEY;
-  const sha256 = crypto.createHash("sha256").update(stringToSign).digest("hex");
-  return { base64Payload, checksum: sha256 + "###" + SALT_INDEX };
-}
-
-// ------------------ PAYMENT INITIATION ------------------
-app.post("/api/pay", async (req, res) => {
+// ------------------ CREATE ORDER ------------------
+app.post("/api/razorpay-order", async (req, res) => {
   try {
-    const { amount, userId, mobile, planName } = req.body;
+    const { amount, planName } = req.body;
 
-    // Environment variable check (already confirmed working, but kept for safety)
-    if (!MERCHANT_ID || !SALT_KEY || !SALT_INDEX) {
-        return res.status(500).json({ error: "Server configuration is incomplete." });
-    }
+    if (!amount) return res.status(400).json({ success: false, error: "Amount is required" });
+    if (!planName) return res.status(400).json({ success: false, error: "Plan name is required" });
 
-    if (!amount || !userId || !mobile) {
-        return res.status(400).json({ error: "Missing required details." });
-    }
-    
-    const payload = {
-      merchantId: MERCHANT_ID,
-      merchantTransactionId: "txn_" + Date.now(),
-      merchantUserId: userId,
-      amount: amount * 100, // Amount in paise
-      redirectUrl: "https://shark-pay-eight.vercel.app/api/callback", 
-      redirectMode: "POST",
-      callbackUrl: "https://shark-pay-eight.vercel.app/api/callback", 
-      mobileNumber: mobile,
-      paymentInstrument: { 
-        type: "PAY_PAGE" 
-      },
+    const options = {
+      amount: amount, // paise me bhejna hota hai (frontend already multiplies by 100)
+      currency: "INR",
+      receipt: `receipt_${Date.now()}`,
+      notes: { purpose: "PlanPurchase" },
+      description: `Plan-${planName.replace(/[^a-zA-Z0-9_]/g, "")}`,
     };
 
-    const endpoint = "/pg/v1/pay";
-    const { base64Payload, checksum } = generateChecksum(payload, endpoint);
-
-    const response = await axios.post(
-      `${BASE_URL}${endpoint}`,
-      { request: base64Payload },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "X-VERIFY": checksum,
-          "X-MERCHANT-ID": MERCHANT_ID,
-        },
-      }
-    );
-
-    res.json(response.data);
-  } catch (err) {
-    console.error("Payment Initiation Failed:", err.response?.data || err.message);
-    res.status(500).json({ error: "Payment initiation failed at the server level. Check server logs." });
+    const order = await razorpay.orders.create(options);
+    console.log("✅ Order Created:", order);
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error("❌ Error creating Razorpay order:", error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// ------------------ PAYMENT CALLBACK ------------------
-app.post("/api/callback", (req, res) => {
-  res.json({ success: true, message: "Callback received and processed." });
+// ------------------ VERIFY PAYMENT ------------------
+app.post("/api/razorpay-verify", async (req, res) => {
+  try {
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      userName,
+      userEmail,
+      userMobile,
+      planName,
+      amount,
+    } = req.body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ success: false, error: "Missing Razorpay fields" });
+    }
+
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(body.toString())
+      .digest("hex");
+
+    if (expectedSignature === razorpay_signature) {
+      console.log("✅ Payment Verified:", {
+        userName,
+        userEmail,
+        userMobile,
+        planName,
+        amount,
+        razorpay_order_id,
+        razorpay_payment_id,
+      });
+      return res.json({ success: true, message: "Payment verified" });
+    } else {
+      console.warn("❌ Signature mismatch");
+      return res.status(400).json({ success: false, error: "Invalid signature" });
+    }
+  } catch (err) {
+    console.error("❌ Verification Error:", err.message);
+    res.status(500).json({ success: false, error: "Internal server error" });
+  }
 });
 
-// ------------------ VERCEL SERVERLESS EXPORT ------------------
-module.exports = app;
+// ------------------ START SERVER ------------------
+const PORT = process.env.PORT || 5001;
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+}
+
+export default app;
