@@ -8,7 +8,7 @@ dotenv.config();
 const app = express();
 
 // ✅ Allow frontend origin
-app.use(cors({ origin: "http://localhost:8080", methods: ["GET", "POST"], allowedHeaders: ["Content-Type"] }));
+app.use(cors({ origin: "https://sharkdigitalhub.com", methods: ["GET", "POST"], allowedHeaders: ["Content-Type"] }));
 app.use(express.json());
 
 const razorpay = new Razorpay({
